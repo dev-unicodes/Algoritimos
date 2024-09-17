@@ -195,7 +195,8 @@ foreach ($agendamento_dia_hora as $timestamp => $horas) {
                 horarios.forEach(hor => {
                     const horarioInt = parseInt(hor.replace(':', ''));
                     
-                    if(dataSel.getDay() === 5 && horarioInt < 1200) return;
+                    // remove os horario do periodo da manhã
+                    //if(dataSel.getDay() === 5 && horarioInt < 1200) return;
                     
 
                     if(!Object.hasOwn(horariosReservados, dataSel.getTime().toString()) || !horariosReservados[dataSel.getTime().toString()].includes(hor)) {
@@ -292,16 +293,7 @@ foreach ($agendamento_dia_hora as $timestamp => $horas) {
 
                 // ***********************************
                 // *****************************************************************************************************
-                
-                
-                // ******************************************************
-                // const date = new Date();
-                // const formatter = new Intl.DateTimeFormat('en-US', { day: '2-digit', month: '2-digit', year: 'numeric' });
-                // const formattedDate = formatter.format(diaForm);
-                // console.log(formattedDate);
-
-               
-
+           
 
                 // 1
 
