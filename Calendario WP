@@ -1,0 +1,313 @@
+<script src="https://cdn.jsdelivr.net/npm/@easepick/datetime@1.2.0/dist/index.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@easepick/core@1.2.0/dist/index.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@easepick/base-plugin@1.2.0/dist/index.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@easepick/amp-plugin@1.2.0/dist/index.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@easepick/lock-plugin@1.2.0/dist/index.umd.min.js"></script>
+
+<?php date_default_timezone_set('America/Sao_Paulo');?>
+
+
+<?php
+ini_set("xdebug.var_display_max_children", '-1');
+ini_set("xdebug.var_display_max_data", '-1');
+ini_set("xdebug.var_display_max_depth", '-1');
+global $wpdb;
+
+if (isset($_SESSION['flash_message'])) {
+    $message = $_SESSION['flash_message'];
+    $classe = $_SESSION['flash_status'];
+    unset($_SESSION['flash_message']);
+    unset($_SESSION['flash_status']);
+    printf('<div class="homologacao_flash %s">%s</div>', $classe, $message);
+}
+
+// Apenas os agendamentos futuros
+$agendamentos = new WP_Query([
+    'post_type' => 'homologacao_agenda',
+    'posts_per_page' => -1,
+    'meta_query' => [
+        [
+            'key' => 'dia',
+            'value' => date('Y-m-d'),
+            'type' => 'DATE',
+            'compare' => '>'
+        ]
+    ]
+]);
+
+$horarios_obj = new WP_Query([
+    'post_type' => 'homologacao_horario',
+    'posts_per_page' => -1,
+
+    'meta_key' => 'horario',
+    'orderby' => 'meta_value',
+    'order' => 'ASC'
+]);
+
+$horarios = [];
+
+foreach ($horarios_obj->posts as $h) {
+    $horarios[] = $h->horario;
+}
+
+
+$feriados = new WP_Query([
+    'post_type' => 'homologacao_feriado',
+    'posts_per_page' => -1
+]);
+
+$agendamento_dia_hora = [];
+$dias_sem_agendamento = [];
+
+// Remove os feriados
+foreach ($feriados->posts as $f) {
+    // Converte unix timestamp para JS timestamp
+    $timestamp = \DateTime::createFromFormat('Y-m-d H:i:s', date('Y') . '-' . $f->data . ' 00:00:00', new DateTimeZone('America/Sao_Paulo'))->getTimestamp();
+
+    $today = new \DateTime();
+    $today->setTime(0, 0, 0);
+    if ($timestamp >= $today->getTimestamp()) {
+        $dias_sem_agendamento[] = $timestamp * 1000;
+    }
+}
+
+// ******************************************************************
+// Vendo o foreach do "Remove os feriados"
+// echo 'Estou aqui - dias_sem_agendamento<br>';
+// foreach ($dias_sem_agendamento as $timestamp) {
+
+//     $data = new \DateTime("@".($timestamp / 1000), new DateTimeZone('America/Sao_Paulo'));    
+//     $dataFormatada = $data->format('Y-m-d');    
+//     echo $dataFormatada . '<br>';
+// }
+// echo '<br>';
+// ******************************************************************
+
+
+
+
+
+
+// Marca os dias com agendamento e a hora
+foreach ($agendamentos->posts as $a) {
+    $timestamp = \DateTime::createFromFormat('Y-m-d H:i:s', $a->dia . ' 00:00:00', new DateTimeZone('America/Sao_Paulo'))->getTimestamp() * 1000;
+    $agendamento_dia_hora[strval($timestamp)][] = $a->hora;
+}
+
+
+
+
+
+
+// Remove os dias com agendamento cheio
+foreach ($agendamento_dia_hora as $timestamp => $horas) {
+    if (count($horas) >= count($horarios)) {
+        unset($agendamento_dia_hora[$timestamp]);
+        // Se o número de horários agendados em 1 dia for maior que o número de horários disponiveis
+        $dias_sem_agendamento[] = floatval($timestamp);
+    }
+}
+
+// ******************************************************************
+// Vendo o foreach do "Remove os dias com agendamento cheio"
+// echo 'Estou aqui - dias_sem_agendamento<br>';
+// foreach ($dias_sem_agendamento as $timestamp) {
+
+//     $data = new \DateTime("@".($timestamp / 1000), new DateTimeZone('America/Sao_Paulo'));    
+//     $dataFormatada = $data->format('Y-m-d');    
+//     echo $dataFormatada . '<br>';
+// }
+// echo '<br>';
+// ******************************************************************
+
+
+?>
+<div class="homologacao">
+    <div class="homologacao_calendario">
+        <input id="datepicker" style="visibility: hidden; position: absolute; pointer-events: none"/>
+    </div>
+
+    <form style="visibility: hidden" class="homologacao_form" method="POST"
+          action="<?= plugin_dir_url(__FILE__) . "homologacao_agendar.php" ?>">
+        <?php
+        $campos = metabox_homologacao([])[0]['fields'];
+        foreach ($campos as $c): ?>
+            <?php if ($c['id'] === 'hora'): ?>
+                <label for="hora">Horário</label>
+                <select id="hora" name="hora" required>
+                </select>
+            <?php else: ?>
+                <label for="<?= $c['id'] ?>"><?= $c['name'] ?></label>
+                <input type="text" name="<?= $c['id'] ?>"
+                       id="<?= $c['id'] ?>" <?php if ($c['id'] === 'dia'): ?> readonly <?php endif; ?>/>
+            <?php endif; ?>
+        <?php endforeach; ?>
+        <button id="agendar-button">Agendar</button>
+    </form>
+
+    <div class="homologacao_texto">
+        <?php if (function_exists('dynamic_sidebar')) {
+            dynamic_sidebar('homologacao');
+        } ?>
+    </div>
+</div>
+
+<script>
+    const DateTime = easepick.DateTime;
+    const minDate = new DateTime();
+
+    const diasSemAgendamento = <?= json_encode($dias_sem_agendamento); ?>;
+    //console.log('diasSemAgendamento:', diasSemAgendamento);
+
+
+
+
+    const horarios = <?= json_encode($horarios) ?>;
+    const horariosReservados = <?= json_encode($agendamento_dia_hora) ?>;
+
+    const picker = new easepick.create({
+        element: "#datepicker",
+        css: [
+            "https://cdn.jsdelivr.net/npm/@easepick/bundle@1.2.0/dist/index.css",
+            "<?= home_url() ?>/wp-content/plugins/homologacao-consir/easepick.css"
+        ],
+        inline: true,
+        zIndex: 10,
+        LockPlugin: {
+            minDate: minDate.add(1, 'day'),
+            filter(date) {
+                //console.log('registro:', diasSemAgendamento);
+                return diasSemAgendamento.includes(date.getTime());
+            }
+        },
+        format: 'DD/MM/YYYY',
+        lang: 'pt-BR',
+        plugins: [
+            "LockPlugin"
+        ],
+        setup(picker) {
+            picker.on("select", (e) => {
+                // Prepara o select de horarios
+                const select = document.querySelector("#hora");
+                const dataSel = e.detail.date;
+                select.innerHTML = '';
+
+                horarios.forEach(hor => {
+                    const horarioInt = parseInt(hor.replace(':', ''));
+                    
+                    if(dataSel.getDay() === 5 && horarioInt < 1200) return;
+                    
+
+                    if(!Object.hasOwn(horariosReservados, dataSel.getTime().toString()) || !horariosReservados[dataSel.getTime().toString()].includes(hor)) {
+                        select.appendChild(new Option(hor, hor));
+                    }
+                })
+
+                document.querySelector(".homologacao_form").style.visibility = 'visible';
+                document.getElementById("dia").value = `${dataSel.getDate().toString().padStart(2, '0')}/${(dataSel.getMonth() + 1).toString().padStart(2, '0')}/${dataSel.getFullYear()}`;
+
+                
+
+
+
+                // *****************************************************************************************************
+                // Variável do JS ********************
+                const diaForm = document.getElementById("dia").value;
+                const [dia, mes, ano] = diaForm.split('/').map(Number);
+                // aqui crio da data pega no calendário
+                const dataSelecionada = new Date(ano, mes - 1, dia - 1); // para acertar o dia
+                console.log('Data do Form no JS:', dataSelecionada.toLocaleDateString("pt-BR")); 
+                // ***********************************
+
+
+
+
+                // Variável do PHP *******************
+                const diaFeriado = <?= json_encode($dias_sem_agendamento); ?>;
+                // Converte timestamps de milissegundos para objetos Date em JS
+                const diaFeriadoJS = diaFeriado.map(d => new Date(d));
+                
+                diaFeriadoJS.forEach(dia => {
+                    //console.log('Data do PHP no JavaScript:', dia.toLocaleDateString("pt-BR"));
+
+                    const formatter = new Intl.DateTimeFormat('pt-BR', { 
+                        day: '2-digit', 
+                        month: '2-digit', 
+                        year: 'numeric', 
+                        timeZone: 'America/Sao_Paulo' 
+                    });
+
+                    const formattedDate = formatter.format(dia);
+                    console.log('Data do PHP no JavaScript:', formattedDate);
+                });
+                // ***********************************
+
+
+
+
+                // Normalizando as datas *************
+                const normalizeDate = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+                const dataSelecionadaNormalizada = normalizeDate(dataSelecionada);
+                const feriadosNormalizados = diaFeriadoJS.map(normalizeDate);
+                // ***********************************
+
+
+
+
+                // Verificação ***********************
+                // Verifico se a data selecionada é feriado
+                const ehFeriado = feriadosNormalizados.some(diaFeriadoNorm => diaFeriadoNorm.getTime() === dataSelecionadaNormalizada.getTime());
+
+                // Pego o botão de agendamento e os campos do form
+                const botaoAgendar = document.getElementById("agendar-button");
+                
+                const campos = [ // Crio o arry de campos para aplicar a propriedade em lote
+                    document.getElementById("empresa"),
+                    document.getElementById("cnpj"),
+                    document.getElementById("contato"),
+                    document.getElementById("fone"),
+                    document.getElementById("email"),
+                    document.getElementById("empregado"),
+                    document.getElementById("dia"),
+                    document.getElementById("hora")
+                ];
+
+                // Atualiza o estado do botão e dos campos
+                if (ehFeriado) {
+                    botaoAgendar.disabled = true;
+                    botaoAgendar.textContent = 'Feriado / Recesso';
+                    botaoAgendar.style.backgroundColor = 'red';
+                    botaoAgendar.style.color = 'white'; 
+                    
+                    campos.forEach(campo => campo.disabled = true);
+
+                } else {
+                    botaoAgendar.disabled = false;
+                    botaoAgendar.textContent = 'Agendar';
+                    botaoAgendar.style.backgroundColor = '#005d85';
+                    botaoAgendar.style.color = 'white';
+                    
+                    campos.forEach(campo => campo.disabled = false);
+                }
+
+                // ***********************************
+                // *****************************************************************************************************
+                
+                
+                // ******************************************************
+                // const date = new Date();
+                // const formatter = new Intl.DateTimeFormat('en-US', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                // const formattedDate = formatter.format(diaForm);
+                // console.log(formattedDate);
+
+               
+
+
+                // 1
+
+
+            })
+        }
+    });
+
+</script>
